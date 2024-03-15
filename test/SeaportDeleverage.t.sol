@@ -5,7 +5,7 @@ import { IIonPool } from "../src/interfaces/IIonPool.sol";
 import { IGemJoin } from "../src/interfaces/IGemJoin.sol";
 import { IUFDMHandler } from "../src/interfaces/IUFDMHandler.sol";
 import { IWhitelist } from "../src/interfaces/IWhitelist.sol";
-import { SeaportDeleverage } from "../src/SeaportDeleverage.sol";
+import { SeaportLeverage } from "../src/SeaportLeverage.sol";
 
 import { LidoLibrary } from "@ionprotocol/libraries/lst/LidoLibrary.sol";
 import { KelpDaoLibrary } from "@ionprotocol/libraries/lrt/KelpDaoLibrary.sol";
@@ -62,9 +62,6 @@ contract SeaportOrderHash is Seaport {
             // Read order counter
             _getCounter(_toOrderParametersReturnType(_decodeOrderComponentsAsOrderParameters)(orderPointer).offerer)
         );
-
-        console.log("test");
-        console2.logBytes32(orderHash);
     }
 }
 
@@ -84,8 +81,8 @@ contract SeaportTest is Test {
     address fulfiller;
 
     SeaportOrderHash seaport;
-    SeaportDeleverage weEthSeaportDeleverage;
-    SeaportDeleverage rsEthSeaportDeleverage;
+    SeaportLeverage weEthSeaportLeverage;
+    SeaportLeverage rsEthSeaportLeverage;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
@@ -97,10 +94,10 @@ contract SeaportTest is Test {
         rsEthGemJoin = IGemJoin(0x3bC3AC09d1ee05393F2848d82cb420f347954432);
         rsEthHandler = IUFDMHandler(payable(0x335FBFf118829Aa5ef0ac91196C164538A21a45A));
 
-        weEthSeaportDeleverage = new SeaportDeleverage(weEthIonPool, weEthGemJoin);
-        rsEthSeaportDeleverage = new SeaportDeleverage(rsEthIonPool, rsEthGemJoin);
+        weEthSeaportLeverage = new SeaportLeverage(weEthIonPool, weEthGemJoin);
+        rsEthSeaportLeverage = new SeaportLeverage(rsEthIonPool, rsEthGemJoin);
 
-        seaport = SeaportOrderHash(payable(address(weEthSeaportDeleverage.SEAPORT())));
+        seaport = SeaportOrderHash(payable(address(weEthSeaportLeverage.SEAPORT())));
 
         SeaportOrderHash s = new SeaportOrderHash(0x00000000F9490004C11Cef243f5400493c00Ad63);
         vm.etch(address(seaport), address(s).code);
@@ -126,12 +123,12 @@ contract SeaportTest is Test {
     }
 
     function test_WeEthDeleverage() public {
-        uint256 initialDeposit = 4 ether; // in collateral terms
-        uint256 resultingAdditionalCollateral = 10 ether; // in collateral terms
-        uint256 maxResultingDebt = 15 ether;
+        uint256 initialDeposit = 10 ether; // in collateral terms
+        uint256 resultingAdditionalCollateral = 20 ether; // in collateral terms
+        uint256 maxResultingDebt = 25 ether;
 
         weEthIonPool.addOperator(address(weEthHandler));
-        weEthIonPool.addOperator(address(weEthSeaportDeleverage));
+        weEthIonPool.addOperator(address(weEthSeaportLeverage));
 
         WSTETH.approve(address(weEthHandler), type(uint256).max);
         WSTETH.depositForLst(500 ether);
@@ -153,18 +150,25 @@ contract SeaportTest is Test {
         uint256 collateralToRemove = 0.8e18;
         uint256 debtToRepay = 1 ether;
 
-        Order memory order = _createOrder(weEthIonPool, weEthHandler, weEthSeaportDeleverage, collateralToRemove, debtToRepay);
+        Order memory order =
+            _createOrder(weEthIonPool, weEthHandler, weEthSeaportLeverage, collateralToRemove, debtToRepay, 0);
 
-        (uint256 collateralBefore, uint256 debtBefore) = weEthIonPool.vault(0, address(this)); 
+        (uint256 collateralBefore, uint256 debtBefore) = weEthIonPool.vault(0, address(this));
         uint256 debtBeforeRad = debtBefore * weEthIonPool.rate(0);
 
-        weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
+        weEthSeaportLeverage.deleverage(order, collateralToRemove, debtToRepay);
+        console.log("");
 
-        (uint256 collateralAfter, uint256 debtAfter) = weEthIonPool.vault(0, address(this)); 
+        (uint256 collateralAfter, uint256 debtAfter) = weEthIonPool.vault(0, address(this));
         uint256 debtAfterRad = debtAfter * weEthIonPool.rate(0);
 
         assertEq(collateralBefore - collateralAfter, collateralToRemove);
         // assertEq(debtBeforeRad - debtAfterRad, debtToRepay * 1e27);
+
+        Order memory order2 =
+            _createOrder(weEthIonPool, weEthHandler, weEthSeaportLeverage, collateralToRemove, debtToRepay, 2);
+
+        weEthSeaportLeverage.deleverage(order2, collateralToRemove, debtToRepay);
     }
 
     function _setupPool(IIonPool pool) internal {
@@ -180,9 +184,10 @@ contract SeaportTest is Test {
     function _createOrder(
         IIonPool pool,
         IUFDMHandler handler,
-        SeaportDeleverage deleverage,
+        SeaportLeverage deleverage,
         uint256 collateralToRemove,
-        uint256 debtToRepay
+        uint256 debtToRepay,
+        uint256 count
     )
         internal
         returns (Order memory order)
@@ -203,6 +208,7 @@ contract SeaportTest is Test {
             endAmount: 1e18,
             recipient: payable(address(this))
         });
+
         ConsiderationItem memory considerationItem2 = ConsiderationItem({
             itemType: ItemType.ERC20,
             token: pool.getIlkAddress(0),
@@ -221,7 +227,7 @@ contract SeaportTest is Test {
 
         OrderParameters memory params = OrderParameters({
             offerer: offerer,
-            zone: address(weEthSeaportDeleverage),
+            zone: address(weEthSeaportLeverage),
             offer: offerItems,
             consideration: considerationItems,
             orderType: OrderType.FULL_RESTRICTED,
@@ -230,10 +236,11 @@ contract SeaportTest is Test {
             zoneHash: bytes32(0),
             salt: 0,
             conduitKey: bytes32(0),
-            totalOriginalConsiderationItems: seaport.getCounter(offerer)
+            totalOriginalConsiderationItems: count
         });
 
         OrderComponents memory components = abi.decode(abi.encode(params), (OrderComponents));
+        seaport.getOrderHash(components);
         bytes32 orderHash = seaport.getRealOrderHash(components);
 
         bytes32 digest = keccak256(abi.encodePacked(EIP_712_PREFIX, DOMAIN_SEPARATOR, orderHash));
