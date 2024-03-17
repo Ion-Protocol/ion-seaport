@@ -5,7 +5,7 @@ import { IIonPool } from "../src/interfaces/IIonPool.sol";
 import { IGemJoin } from "../src/interfaces/IGemJoin.sol";
 import { IUFDMHandler } from "../src/interfaces/IUFDMHandler.sol";
 import { IWhitelist } from "../src/interfaces/IWhitelist.sol";
-import { SeaportLeverage } from "../src/SeaportLeverage.sol";
+import { SeaportDeleverage } from "../src/SeaportDeleverage.sol";
 
 import { LidoLibrary } from "@ionprotocol/libraries/lst/LidoLibrary.sol";
 import { KelpDaoLibrary } from "@ionprotocol/libraries/lrt/KelpDaoLibrary.sol";
@@ -48,7 +48,7 @@ contract SeaportOrderHash is Seaport {
         /**
          * @custom:name order
          */
-        OrderComponents calldata order
+        OrderComponents calldata orderComponents
     )
         external
         view
@@ -56,12 +56,24 @@ contract SeaportOrderHash is Seaport {
     {
         CalldataPointer orderPointer = CalldataStart.pptr();
 
+        console.log("orderComponents.offerer", orderComponents.offerer);
+        console.log("orderComponents.zone", orderComponents.zone);
+        console.log("orderComponents.startTime", orderComponents.startTime);
+        console.log("orderComponents.endTime", orderComponents.endTime);
+        console.log("orderComponents.zoneHash", orderComponents.zoneHash);
+        console.log("orderComponents.salt", orderComponents.salt);
+        console.log("orderComponents.conduitKey", orderComponents.conduitKey);
+        console.log("orderComponents.count", orderComponents.counter);
+        console.log("count", _getCounter(orderComponents.offerer));
+
         // Derive order hash by supplying order parameters along with counter.
         orderHash = _deriveOrderHash(
-            abi.decode(abi.encode(order), (OrderParameters)),
+            abi.decode(abi.encode(orderComponents), (OrderParameters)),
             // Read order counter
             _getCounter(_toOrderParametersReturnType(_decodeOrderComponentsAsOrderParameters)(orderPointer).offerer)
         );
+
+        console.log("");
     }
 }
 
@@ -81,8 +93,8 @@ contract SeaportTest is Test {
     address fulfiller;
 
     SeaportOrderHash seaport;
-    SeaportLeverage weEthSeaportLeverage;
-    SeaportLeverage rsEthSeaportLeverage;
+    SeaportDeleverage weEthSeaportDeleverage;
+    SeaportDeleverage rsEthSeaportDeleverage;
 
     function setUp() public {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
@@ -94,10 +106,10 @@ contract SeaportTest is Test {
         rsEthGemJoin = IGemJoin(0x3bC3AC09d1ee05393F2848d82cb420f347954432);
         rsEthHandler = IUFDMHandler(payable(0x335FBFf118829Aa5ef0ac91196C164538A21a45A));
 
-        weEthSeaportLeverage = new SeaportLeverage(weEthIonPool, weEthGemJoin);
-        rsEthSeaportLeverage = new SeaportLeverage(rsEthIonPool, rsEthGemJoin);
+        weEthSeaportDeleverage = new SeaportDeleverage(weEthIonPool, weEthGemJoin);
+        rsEthSeaportDeleverage = new SeaportDeleverage(rsEthIonPool, rsEthGemJoin);
 
-        seaport = SeaportOrderHash(payable(address(weEthSeaportLeverage.SEAPORT())));
+        seaport = SeaportOrderHash(payable(address(weEthSeaportDeleverage.SEAPORT())));
 
         SeaportOrderHash s = new SeaportOrderHash(0x00000000F9490004C11Cef243f5400493c00Ad63);
         vm.etch(address(seaport), address(s).code);
@@ -128,7 +140,7 @@ contract SeaportTest is Test {
         uint256 maxResultingDebt = 25 ether;
 
         weEthIonPool.addOperator(address(weEthHandler));
-        weEthIonPool.addOperator(address(weEthSeaportLeverage));
+        weEthIonPool.addOperator(address(weEthSeaportDeleverage));
 
         WSTETH.approve(address(weEthHandler), type(uint256).max);
         WSTETH.depositForLst(500 ether);
@@ -151,12 +163,12 @@ contract SeaportTest is Test {
         uint256 debtToRepay = 1 ether;
 
         Order memory order =
-            _createOrder(weEthIonPool, weEthHandler, weEthSeaportLeverage, collateralToRemove, debtToRepay, 0);
+            _createOrder(weEthIonPool, weEthHandler, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 1_241_289);
 
         (uint256 collateralBefore, uint256 debtBefore) = weEthIonPool.vault(0, address(this));
         uint256 debtBeforeRad = debtBefore * weEthIonPool.rate(0);
 
-        weEthSeaportLeverage.deleverage(order, collateralToRemove, debtToRepay);
+        weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
         console.log("");
 
         (uint256 collateralAfter, uint256 debtAfter) = weEthIonPool.vault(0, address(this));
@@ -166,9 +178,9 @@ contract SeaportTest is Test {
         // assertEq(debtBeforeRad - debtAfterRad, debtToRepay * 1e27);
 
         Order memory order2 =
-            _createOrder(weEthIonPool, weEthHandler, weEthSeaportLeverage, collateralToRemove, debtToRepay, 2);
+            _createOrder(weEthIonPool, weEthHandler, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 7);
 
-        weEthSeaportLeverage.deleverage(order2, collateralToRemove, debtToRepay);
+        weEthSeaportDeleverage.deleverage(order2, collateralToRemove, debtToRepay);
     }
 
     function _setupPool(IIonPool pool) internal {
@@ -184,10 +196,10 @@ contract SeaportTest is Test {
     function _createOrder(
         IIonPool pool,
         IUFDMHandler handler,
-        SeaportLeverage deleverage,
+        SeaportDeleverage deleverage,
         uint256 collateralToRemove,
         uint256 debtToRepay,
-        uint256 count
+        uint256 salt
     )
         internal
         returns (Order memory order)
@@ -227,20 +239,19 @@ contract SeaportTest is Test {
 
         OrderParameters memory params = OrderParameters({
             offerer: offerer,
-            zone: address(weEthSeaportLeverage),
+            zone: address(weEthSeaportDeleverage),
             offer: offerItems,
             consideration: considerationItems,
             orderType: OrderType.FULL_RESTRICTED,
             startTime: 0,
             endTime: type(uint256).max,
             zoneHash: bytes32(0),
-            salt: 0,
+            salt: salt,
             conduitKey: bytes32(0),
-            totalOriginalConsiderationItems: count
+            totalOriginalConsiderationItems: 2
         });
 
         OrderComponents memory components = abi.decode(abi.encode(params), (OrderComponents));
-        seaport.getOrderHash(components);
         bytes32 orderHash = seaport.getRealOrderHash(components);
 
         bytes32 digest = keccak256(abi.encodePacked(EIP_712_PREFIX, DOMAIN_SEPARATOR, orderHash));

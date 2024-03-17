@@ -20,26 +20,26 @@ using WadRayMath for uint256;
  * RFQ swaps facilitated by Seaport.
  *
  * @dev The standard Seaport flow would go as follows:
- * 
+ *
  *      1. An `offerrer` creates an `Order` and signs it. The `fulfiller` will
  *      be given both the `Order` payload and the `signature`. The `fulfiller`'s
  *      role is to execute the transaction.
- *      
+ *
  *      Inside an `Order`, there is
  *       - an `offerer`: the signature that will be `ecrecover()`ed to verify
  *       the integrity of the signature.
  *       - an array of `Offer`s: Each `Offer` will have a token and an amount.
  *       - an array of `Consideration`s: Each `Consideration` will have a token,
  *       an amount and a recipient.
- *      
+ *
  *      2. Seaport will verify the signature was signed by the `offerer`.
- *      
+ *
  *      3. Seaport will iterate through all the `Offer`s and transfer the
  *      specified amount of each token to the fulfiller from the offerer.
- *      
+ *
  *      4. Seaport will iterate through all the `Consideration`s and transfer
  *      the specified amount of each token from the fulfiller to the recipient.
- * 
+ *
  * For the (de)leverage use-case, it is unideal that steps 3 and 4 must happen
  * in order because it means `Offer` items cannot be used before satisfying
  * `Consideration` constraints. Consider the deleverage case where debt must
@@ -48,21 +48,21 @@ using WadRayMath for uint256;
  * Seaport side, collateral must be paid before receiving the counterparty, then
  * a flashloan must be used. Ideally, Seaport would allow use of the
  * counterparty's collateral before checking the Consideration `constraints`.
- * 
+ *
  * While this would not be possible in the standard Seaport flow, we engage in a
  * non-standard flow that hijacks the ERC20 `transferFrom()` to gain control
  * flow in between steps 3 and 4. Normally, if the `offerer` wanted to sign for
  * a trade between 100 Token A and 90 Token B, the `Order` payload would contain
  * an `Offer` of 100 Token A and a `Consideration` of 90 Token B to the
  * `offerer`'s address.
- * 
+ *
  * However, to sign for the same trade to be executed through this contract, the
  * `Order` payload would still contain an `Offer` of 100 Token A. However, the
  * first `Consideration` would pass this contract address as the token address
  * (and the amount would be used to pass some other data) and the second
  * `Consideration` would pass the aforementioned 90 Token B to the `offerer`'s
  * address.
- * 
+ *
  * This allows this contract to gain control flow in between steps 3 and 4
  * through the `transferFrom()` function and Seaport still enforces the
  * `constraints` of the other `Consideration`s ensuring counterparty's terms.
@@ -79,6 +79,7 @@ contract SeaportDeleverage {
     error OrderTypeMustBeFullRestricted(OrderType orderType);
     error ZoneHashMustBeZero(bytes32 zoneHash);
     error ConduitKeyMustBeZero(bytes32 conduitKey);
+    error InvalidTotalOriginalConsiderationItems();
 
     // Offer item validation
     error OItemTypeMustBeERC20(ItemType itemType);
@@ -141,8 +142,8 @@ contract SeaportDeleverage {
 
     /**
      * @notice Deleverage a position on `IonPool` through Seaport.
-     * 
-     * @dev 
+     *
+     * @dev
      * ```solidity
      * struct Order {
      *      OrderParameters parameters;
@@ -181,21 +182,22 @@ contract SeaportDeleverage {
      *      address payable recipient;
      * }
      * ```
-     * 
+     *
      * REQUIRES:
      * - There should only be one token for the `Offer`.
      * - There should be two items in the `Consideration`.
-     * - The `zone` must be this contract's address. 
+     * - The `zone` must be this contract's address.
      * - The `orderType` must be `FULL_RESTRICTED`. This means only the `zone`,
      * or the offerer, can fulfill the order.
      * - The `conduitKey` must be zero. No conduit should be used.
-     * 
+     * - The `totalOriginalConsiderationItems` must be 2.
+     *
      * - The `Offer` item must be of type `ERC20`.
      * - For the case of deleverage, `token` of the `Offer` item must be the
      * `BASE` token.
      * - The `startAmount` and `endAmount` of the `Offer` item must be equal to
      * `debtToRepay`. Start and end should be equal because the amount is fixed.
-     * 
+     *
      * - The first `Consideration` item must be of type `ERC20`.
      * - The `token` of the first `Consideration` item must be this contract's
      * address. This is to allow this contract to gain control flow. We also
@@ -204,12 +206,22 @@ contract SeaportDeleverage {
      * `transferFrom()` args will be communicated through transient storage.
      * - The `startAmount` and `endAmount` of the first `Consideration` item
      * communicate the amount of debt to repay to the callback.
-     * 
-     * The second `Consideration` item must be of type `ERC20`.
-     * The `token` of the second `Consideration` item must be the `COLLATERAL`
-     * The second `Consideration` item must have the `startAmount` and `endAmount`
+     * - The `recipient` of the first `Consideration` item must be `msg.sender`.
+     * This will be user's vault that will be deleveraged. This contract assumes
+     * that caller is the owner of the vault.
+     *
+     * - The second `Consideration` item must be of type `ERC20`.
+     * - The `token` of the second `Consideration` item must be the `COLLATERAL`
+     * - The second `Consideration` item must have the `startAmount` and `endAmount`
      * equal to `collateralToRemove`.
-     * 
+     *
+     * We don't constrain the `recipient` of the second `Consideration` item.
+     *
+     * It is technically possible for two distinct orders to have the same
+     * parameters. The `salt` should be used to distinguish between two orders
+     * with the same parameters. Otherwise, they will map to the same order hash
+     * and only one of them will be able to be fulfilled.
+     *
      * @param order Seaport order.
      * @param collateralToRemove Amount of collateral to remove. [WAD]
      * @param debtToRepay Amount of debt to repay. [WAD]
@@ -222,6 +234,7 @@ contract SeaportDeleverage {
         if (params.zone != address(this)) revert ZoneMustBeThis(params.zone);
         if (params.orderType != OrderType.FULL_RESTRICTED) revert OrderTypeMustBeFullRestricted(params.orderType);
         if (params.conduitKey != bytes32(0)) revert ConduitKeyMustBeZero(params.conduitKey);
+        if (params.totalOriginalConsiderationItems != 2) revert InvalidTotalOriginalConsiderationItems();
 
         OfferItem calldata offer1 = params.offer[0];
 
@@ -263,7 +276,7 @@ contract SeaportDeleverage {
 
         SEAPORT.fulfillOrder(order, bytes32(0));
 
-        // Maintain composability :/
+        // Maintain composability
         assembly {
             tstore(TSLOT_DELEVERAGE_INITIATED, 0)
             tstore(TSLOT_COLLATERAL_TO_REMOVE, 0)
@@ -272,27 +285,27 @@ contract SeaportDeleverage {
 
     /**
      * @notice This callback is not meant to be called directly.
-     * 
-     * @dev This function has nothing to do with `transferFrom()` despite its
-     * name. This would be better described as a callback from Seaport to give
-     * this contract control flow between the `Offer` being transferred and the
-     * `Consideration` being transferred. We hijack the `transferFrom()`
-     * selector to be able to use the default Seaport flow.
-     * 
+     *
+     * @dev This function selector has been mined to match the `transferFrom()`
+     * selector (`0x23b872dd`). We hijack the `transferFrom()` selector to be
+     * able to use the default Seaport flow. This is a callback from Seaport to
+     * give this contract control flow between the `Offer` being transferred and
+     * the `Consideration` being transferred.
+     *
      * In order to enfore that this function is only called through a
      * transaction initiated by this contract, we use the `onlyReentrant`
      * modifier.
-     * 
+     *
      * This function can only be called by the Seaport contract.
-     * 
+     *
      * The second and the third arguments are used to communicate data necessary
-     * for the callback context. Transient storage it used to communicate any
+     * for the callback context. Transient storage is used to communicate any
      * extra data that could not be fit into the `transferFrom()` args.
-     * 
+     *
      * @param user whose position to modify on `IonPool`
      * @param debtToRepay amount of debt to repay on the `user`'s position
      */
-    function transferFrom(address, address user, uint256 debtToRepay) external onlyReentrant {
+    function seaportCallback4878572495(address, address user, uint256 debtToRepay) external onlyReentrant {
         if (msg.sender != address(SEAPORT)) revert MsgSenderMustBeSeaport(msg.sender);
 
         uint256 collateralToRemove;
