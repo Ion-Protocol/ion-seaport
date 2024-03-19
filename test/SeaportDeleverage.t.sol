@@ -130,7 +130,9 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         OrderType invalidOrderType = OrderType.FULL_OPEN;
         order.parameters.orderType = invalidOrderType;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.OrderTypeMustBeFullRestricted.selector, invalidOrderType));
+        vm.expectRevert(
+            abi.encodeWithSelector(SeaportDeleverage.OrderTypeMustBeFullRestricted.selector, invalidOrderType)
+        );
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -152,7 +154,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         uint256 invalidTotalOriginalConsiderationItems = 3;
         order.parameters.totalOriginalConsiderationItems = invalidTotalOriginalConsiderationItems;
 
-        vm.expectRevert( SeaportDeleverage.InvalidTotalOriginalConsiderationItems.selector);
+        vm.expectRevert(SeaportDeleverage.InvalidTotalOriginalConsiderationItems.selector);
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 }
