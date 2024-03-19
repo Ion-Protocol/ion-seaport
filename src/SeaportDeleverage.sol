@@ -15,8 +15,8 @@ using WadRayMath for uint256;
 
 /**
  * @title Seaport Deleverage
- * @notice A contract to leverage or deleverage a position on Ion Protocol using
- * RFQ swaps facilitated by Seaport.
+ * @notice A contract to deleverage a position on Ion Protocol using RFQ swaps
+ * facilitated by Seaport.
  *
  * @dev The standard Seaport flow would go as follows:
  *
@@ -65,6 +65,17 @@ using WadRayMath for uint256;
  * This allows this contract to gain control flow in between steps 3 and 4
  * through the `transferFrom()` function and Seaport still enforces the
  * `constraints` of the other `Consideration`s ensuring counterparty's terms.
+ * 
+ * 
+ * 
+ * The case of a full deleverage presents a special problem where the exact
+ * amount of debt to repay will not be known until tx execution since the debt
+ * is accrued every block. This is problematic because the market maker won't be
+ * able to sign for the exact amount of base token to be traded for offchain
+ * (also, Seaport's support for partial fills is quite limited). In the case of
+ * a full deleverage, the market maker can overestimate the amount of base token
+ * to be sold and this contract will refund the excess to the user. 
+ * 
  */
 contract SeaportDeleverage {
     error InvalidContractConfigs(IIonPool pool, IGemJoin join);
@@ -300,7 +311,7 @@ contract SeaportDeleverage {
      * give this contract control flow between the `Offer` being transferred and
      * the `Consideration` being transferred.
      *
-     * In order to enfore that this function is only called through a
+     * In order to enforce that this function is only called through a
      * transaction initiated by this contract, we use the `onlyReentrant`
      * modifier.
      *
