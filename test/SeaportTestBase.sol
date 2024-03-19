@@ -26,8 +26,6 @@ import { CalldataStart, CalldataPointer } from "seaport-types/src/helpers/Pointe
 
 import { Test } from "forge-std/Test.sol";
 
-import { safeconsole as console } from "forge-std/safeconsole.sol";
-
 using EtherFiLibrary for IWeEth;
 using KelpDaoLibrary for IRsEth;
 using LidoLibrary for IWstEth;
@@ -47,24 +45,12 @@ contract SeaportOrderHash is Seaport {
     {
         CalldataPointer orderPointer = CalldataStart.pptr();
 
-        console.log("orderComponents.offerer", orderComponents.offerer);
-        console.log("orderComponents.zone", orderComponents.zone);
-        console.log("orderComponents.startTime", orderComponents.startTime);
-        console.log("orderComponents.endTime", orderComponents.endTime);
-        console.log("orderComponents.zoneHash", orderComponents.zoneHash);
-        console.log("orderComponents.salt", orderComponents.salt);
-        console.log("orderComponents.conduitKey", orderComponents.conduitKey);
-        console.log("orderComponents.count", orderComponents.counter);
-        console.log("count", _getCounter(orderComponents.offerer));
-
         // Derive order hash by supplying order parameters along with counter.
         orderHash = _deriveOrderHash(
             abi.decode(abi.encode(orderComponents), (OrderParameters)),
             // Read order counter
             _getCounter(_toOrderParametersReturnType(_decodeOrderComponentsAsOrderParameters)(orderPointer).offerer)
         );
-
-        console.log("");
     }
 }
 

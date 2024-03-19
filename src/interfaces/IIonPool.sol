@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.4;
 
+import { ISpotOracle } from "./ISpotOracle.sol";
+
 interface IIonPool {
     error AccessControlBadConfirmation();
     error AccessControlEnforcedDefaultAdminDelay(uint48 schedule);
@@ -203,7 +205,7 @@ interface IIonPool {
     function repayBadDebt(address user, uint256 rad) external;
     function revokeRole(bytes32 role, address account) external;
     function rollbackDefaultAdminDelay() external;
-    function spot(uint8 ilkIndex) external view returns (address);
+    function spot(uint8 ilkIndex) external view returns (ISpotOracle);
     function supply(address user, uint256 amount, bytes32[] memory proof) external;
     function supplyFactor() external view returns (uint256);
     function supplyFactorUnaccrued() external view returns (uint256);

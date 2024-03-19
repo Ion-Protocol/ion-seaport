@@ -9,12 +9,7 @@ import { IWstEth, IWeEth } from "@ionprotocol/interfaces/ProviderInterfaces.sol"
 import { EtherFiLibrary } from "@ionprotocol/libraries/lrt/EtherFiLibrary.sol";
 
 import { OrderType, ItemType } from "seaport-types/src/lib/ConsiderationEnums.sol";
-import {
-    OfferItem,
-    ConsiderationItem,
-    Order,
-    OrderComponents
-} from "seaport-types/src/lib/ConsiderationStructs.sol";
+import { OfferItem, ConsiderationItem, Order, OrderComponents } from "seaport-types/src/lib/ConsiderationStructs.sol";
 
 using LidoLibrary for IWstEth;
 using EtherFiLibrary for IWeEth;
@@ -54,21 +49,27 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         Order memory order =
             _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 1_241_289);
 
-        (uint256 collateralBefore, uint256 debtBefore) = weEthIonPool.vault(0, address(this));
-        uint256 debtBeforeRad = debtBefore * weEthIonPool.rate(0);
+        (uint256 collateralBefore1, uint256 debtBefore1) = weEthIonPool.vault(0, address(this));
+        uint256 debtBeforeRad = debtBefore1 * weEthIonPool.rate(0);
 
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
 
-        (uint256 collateralAfter, uint256 debtAfter) = weEthIonPool.vault(0, address(this));
-        uint256 debtAfterRad = debtAfter * weEthIonPool.rate(0);
+        (uint256 collateralAfter1, uint256 debtAfter1) = weEthIonPool.vault(0, address(this));
+        uint256 debtAfterRad = debtAfter1 * weEthIonPool.rate(0);
 
-        assertEq(collateralBefore - collateralAfter, collateralToRemove);
-        // assertEq(debtBeforeRad - debtAfterRad, debtToRepay * 1e27);
+        uint256 normalizedDebtToRepay = debtToRepay * 1e27 / weEthIonPool.rate(0);
 
-        Order memory order2 =
-            _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 7);
+        assertEq(collateralBefore1 - collateralAfter1, collateralToRemove);
+        assertEq(debtBeforeRad - debtAfterRad, normalizedDebtToRepay * weEthIonPool.rate(0));
+
+        Order memory order2 = _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 7);
 
         weEthSeaportDeleverage.deleverage(order2, collateralToRemove, debtToRepay);
+
+        (uint256 collateralAfter2, uint256 debtAfter2) = weEthIonPool.vault(0, address(this));
+
+        assertEq(collateralAfter1 - collateralAfter2, collateralToRemove);
+        assertEq(debtAfterRad - debtAfter2 * weEthIonPool.rate(0), normalizedDebtToRepay * weEthIonPool.rate(0));
     }
 
     function test_WeEthFullDeleverage() public {
@@ -79,16 +80,24 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         Order memory order =
             _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 1_241_289);
 
-        (uint256 collateralBefore, uint256 debtBefore) = weEthIonPool.vault(0, address(this));
-        uint256 debtBeforeRad = debtBefore * weEthIonPool.rate(0);
+        (uint256 collateralBefore,) = weEthIonPool.vault(0, address(this));
+        uint256 baseThisBalanceBefore = WSTETH.balanceOf(address(this));
+        uint256 basePoolBalanaceBefore = WSTETH.balanceOf(address(weEthIonPool));
 
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
 
         (uint256 collateralAfter, uint256 debtAfter) = weEthIonPool.vault(0, address(this));
-        uint256 debtAfterRad = debtAfter * weEthIonPool.rate(0);
 
-        // assertEq(collateralBefore - collateralAfter, collateralToRemove);
-        // assertEq(debtBeforeRad - debtAfterRad, debtToRepay * 1e27);
+        assertEq(collateralBefore - collateralAfter, collateralToRemove);
+        assertEq(debtAfter, 0);
+        assertEq(WSTETH.balanceOf(address(weEthSeaportDeleverage)), 0);
+
+        // Check that currentDebtPlusBound (which is the amount of BASE provided
+        // by market maker) is equal to the BASE used by POOL and refunded to
+        // user.
+        uint256 baseThisBalanceDiff = WSTETH.balanceOf(address(this)) - baseThisBalanceBefore;
+        uint256 basePoolBalanaceDiff = WSTETH.balanceOf(address(weEthIonPool)) - basePoolBalanaceBefore;
+        assertEq(baseThisBalanceDiff + basePoolBalanaceDiff, currentDebtPlusBound);
     }
 
     function test_RevertWhen_CollateralToRemoveGreaterThanVaultCollateral() public {
