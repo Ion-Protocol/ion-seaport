@@ -14,7 +14,6 @@ import { EtherFiLibrary } from "@ionprotocol/libraries/lrt/EtherFiLibrary.sol";
 
 import { Seaport } from "seaport-core/src/Seaport.sol";
 
-import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.sol";
 import { OrderType, ItemType } from "seaport-types/src/lib/ConsiderationEnums.sol";
 import {
     OfferItem,
@@ -28,7 +27,6 @@ import { CalldataStart, CalldataPointer } from "seaport-types/src/helpers/Pointe
 import { Test } from "forge-std/Test.sol";
 
 import { safeconsole as console } from "forge-std/safeconsole.sol";
-import { console2 } from "forge-std/console2.sol";
 
 using EtherFiLibrary for IWeEth;
 using KelpDaoLibrary for IRsEth;
@@ -124,9 +122,9 @@ contract SeaportTestBase is Test {
         whitelist.updateLendersRoot(bytes32(0));
         vm.stopPrank();
 
-        vm.deal(offerer, 10 ether);
+        vm.deal(offerer, 100 ether);
         vm.startPrank(offerer);
-        WSTETH.depositForLst(10 ether);
+        WSTETH.depositForLst(100 ether);
         WSTETH.approve(address(seaport), type(uint256).max);
         vm.stopPrank();
 
@@ -146,13 +144,13 @@ contract SeaportTestBase is Test {
 
     function _createOrder(
         IIonPool pool,
-        IUFDMHandler handler,
         SeaportDeleverage deleverage,
         uint256 collateralToRemove,
         uint256 debtToRepay,
         uint256 salt
     )
         internal
+        view
         returns (Order memory order)
     {
         OfferItem memory offerItem = OfferItem({
@@ -167,8 +165,8 @@ contract SeaportTestBase is Test {
             itemType: ItemType.ERC20,
             token: address(deleverage),
             identifierOrCriteria: 0,
-            startAmount: 1e18,
-            endAmount: 1e18,
+            startAmount: debtToRepay,
+            endAmount: debtToRepay,
             recipient: payable(address(this))
         });
 
