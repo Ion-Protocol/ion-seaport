@@ -14,7 +14,6 @@ import { EtherFiLibrary } from "@ionprotocol/libraries/lrt/EtherFiLibrary.sol";
 
 import { Seaport } from "seaport-core/src/Seaport.sol";
 
-import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.sol";
 import { OrderType, ItemType } from "seaport-types/src/lib/ConsiderationEnums.sol";
 import {
     OfferItem,
@@ -26,9 +25,6 @@ import {
 import { CalldataStart, CalldataPointer } from "seaport-types/src/helpers/PointerLibraries.sol";
 
 import { Test } from "forge-std/Test.sol";
-
-import { safeconsole as console } from "forge-std/safeconsole.sol";
-import { console2 } from "forge-std/console2.sol";
 
 using EtherFiLibrary for IWeEth;
 using KelpDaoLibrary for IRsEth;
@@ -49,24 +45,12 @@ contract SeaportOrderHash is Seaport {
     {
         CalldataPointer orderPointer = CalldataStart.pptr();
 
-        console.log("orderComponents.offerer", orderComponents.offerer);
-        console.log("orderComponents.zone", orderComponents.zone);
-        console.log("orderComponents.startTime", orderComponents.startTime);
-        console.log("orderComponents.endTime", orderComponents.endTime);
-        console.log("orderComponents.zoneHash", orderComponents.zoneHash);
-        console.log("orderComponents.salt", orderComponents.salt);
-        console.log("orderComponents.conduitKey", orderComponents.conduitKey);
-        console.log("orderComponents.count", orderComponents.counter);
-        console.log("count", _getCounter(orderComponents.offerer));
-
         // Derive order hash by supplying order parameters along with counter.
         orderHash = _deriveOrderHash(
             abi.decode(abi.encode(orderComponents), (OrderParameters)),
             // Read order counter
             _getCounter(_toOrderParametersReturnType(_decodeOrderComponentsAsOrderParameters)(orderPointer).offerer)
         );
-
-        console.log("");
     }
 }
 
@@ -124,9 +108,9 @@ contract SeaportTestBase is Test {
         whitelist.updateLendersRoot(bytes32(0));
         vm.stopPrank();
 
-        vm.deal(offerer, 10 ether);
+        vm.deal(offerer, 100 ether);
         vm.startPrank(offerer);
-        WSTETH.depositForLst(10 ether);
+        WSTETH.depositForLst(100 ether);
         WSTETH.approve(address(seaport), type(uint256).max);
         vm.stopPrank();
 
@@ -146,13 +130,13 @@ contract SeaportTestBase is Test {
 
     function _createOrder(
         IIonPool pool,
-        IUFDMHandler handler,
         SeaportDeleverage deleverage,
         uint256 collateralToRemove,
         uint256 debtToRepay,
         uint256 salt
     )
         internal
+        view
         returns (Order memory order)
     {
         OfferItem memory offerItem = OfferItem({
@@ -167,8 +151,8 @@ contract SeaportTestBase is Test {
             itemType: ItemType.ERC20,
             token: address(deleverage),
             identifierOrCriteria: 0,
-            startAmount: 1e18,
-            endAmount: 1e18,
+            startAmount: debtToRepay,
+            endAmount: debtToRepay,
             recipient: payable(address(this))
         });
 

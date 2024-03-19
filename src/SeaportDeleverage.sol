@@ -5,7 +5,6 @@ import { IIonPool } from "./interfaces/IIonPool.sol";
 import { IGemJoin } from "./interfaces/IGemJoin.sol";
 import { WadRayMath } from "@ionprotocol/libraries/math/WadRayMath.sol";
 
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.sol";
@@ -16,8 +15,8 @@ using WadRayMath for uint256;
 
 /**
  * @title Seaport Deleverage
- * @notice A contract to leverage or deleverage a position on Ion Protocol using
- * RFQ swaps facilitated by Seaport.
+ * @notice A contract to deleverage a position on Ion Protocol using RFQ swaps
+ * facilitated by Seaport.
  *
  * @dev The standard Seaport flow would go as follows:
  *
@@ -66,11 +65,23 @@ using WadRayMath for uint256;
  * This allows this contract to gain control flow in between steps 3 and 4
  * through the `transferFrom()` function and Seaport still enforces the
  * `constraints` of the other `Consideration`s ensuring counterparty's terms.
+ * 
+ * 
+ * 
+ * The case of a full deleverage presents a special problem where the exact
+ * amount of debt to repay will not be known until tx execution since the debt
+ * is accrued every block. This is problematic because the market maker won't be
+ * able to sign for the exact amount of base token to be traded for offchain
+ * (also, Seaport's support for partial fills is quite limited). In the case of
+ * a full deleverage, the market maker can overestimate the amount of base token
+ * to be sold and this contract will refund the excess to the user. 
+ * 
  */
 contract SeaportDeleverage {
     error InvalidContractConfigs(IIonPool pool, IGemJoin join);
     error DeleverageMustBeInitiated();
     error MsgSenderMustBeSeaport(address msgSender);
+    error NotEnoughCollateral(uint256 collateralToRemove, uint256 currentCollateral);
 
     // Order parameters head validation
     error OffersLengthMustBeOne(uint256 length);
@@ -92,7 +103,7 @@ contract SeaportDeleverage {
     error C1TokenMustBeThis(address token);
     error C1StartAmountMustBeDebtToRepay(uint256 startAmount, uint256 debtToRepay);
     error C1EndAmountMustBeDebtToRepay(uint256 endAmount, uint256 debtToRepay);
-    error C1RecipientMustBeSender(address recipient);
+    error C1RecipientMustBeSender(address invalidRecipient);
 
     // Consideration item 2 validation
     error C2TypeMustBeERC20(ItemType itemType);
@@ -111,6 +122,11 @@ contract SeaportDeleverage {
         }
 
         if (deleverageInitiated == 0) revert DeleverageMustBeInitiated();
+        _;
+    }
+
+    modifier onlySeaport() {
+        if (msg.sender != address(SEAPORT)) revert MsgSenderMustBeSeaport(msg.sender);
         _;
     }
 
@@ -227,6 +243,9 @@ contract SeaportDeleverage {
      * @param debtToRepay Amount of debt to repay. [WAD]
      */
     function deleverage(Order calldata order, uint256 collateralToRemove, uint256 debtToRepay) external {
+        uint256 currentCollateral = POOL.collateral(0, msg.sender);
+        if (collateralToRemove > currentCollateral) revert NotEnoughCollateral(collateralToRemove, currentCollateral);
+
         OrderParameters calldata params = order.parameters;
 
         if (params.offer.length != 1) revert OffersLengthMustBeOne(params.offer.length);
@@ -255,7 +274,7 @@ contract SeaportDeleverage {
         if (consideration1.endAmount != debtToRepay) 
             revert C1EndAmountMustBeDebtToRepay(consideration1.endAmount, debtToRepay);
         if (consideration1.recipient != msg.sender) 
-            revert C1RecipientMustBeSender(msg.sender);
+            revert C1RecipientMustBeSender(consideration1.recipient);
 
         ConsiderationItem calldata consideration2 = params.consideration[1];
         
@@ -292,7 +311,7 @@ contract SeaportDeleverage {
      * give this contract control flow between the `Offer` being transferred and
      * the `Consideration` being transferred.
      *
-     * In order to enfore that this function is only called through a
+     * In order to enforce that this function is only called through a
      * transaction initiated by this contract, we use the `onlyReentrant`
      * modifier.
      *
@@ -305,19 +324,35 @@ contract SeaportDeleverage {
      * @param user whose position to modify on `IonPool`
      * @param debtToRepay amount of debt to repay on the `user`'s position
      */
-    function seaportCallback4878572495(address, address user, uint256 debtToRepay) external onlyReentrant {
-        if (msg.sender != address(SEAPORT)) revert MsgSenderMustBeSeaport(msg.sender);
-
+    function seaportCallback4878572495(address, address user, uint256 debtToRepay) external onlySeaport onlyReentrant {
         uint256 collateralToRemove;
         assembly {
             collateralToRemove := tload(TSLOT_COLLATERAL_TO_REMOVE)
         }
 
         uint256 currentRate = POOL.rate(0);
+        uint256 currentNormalizedDebt = POOL.normalizedDebt(0, user);
 
         uint256 repayAmountNormalized = debtToRepay.rayDivDown(currentRate);
 
-        POOL.repay(0, user, address(this), repayAmountNormalized);
+        // In the case of a full deleverage, the Seaport order will not be able
+        // to predict the exact amount of debt to repay since this will change
+        // at execution time when debt is accrued. The order will have to to
+        // overestimate the amount of base token to be traded for through
+        // seaport. Excess base token will be refunded to the user.
+        if (repayAmountNormalized > currentNormalizedDebt) {
+            // Emulates IonPool calculation
+            uint256 neccesaryBase = currentNormalizedDebt.rayMulUp(currentRate);
+
+            BASE.transfer(user, debtToRepay - neccesaryBase);
+            POOL.repay(0, user, address(this), currentNormalizedDebt);
+
+            // Sanity check
+            assert(BASE.balanceOf(address(this)) == 0);
+        } else {
+            POOL.repay(0, user, address(this), repayAmountNormalized);
+        }
+
         POOL.withdrawCollateral(0, user, address(this), collateralToRemove);
         JOIN.exit(address(this), collateralToRemove);
     }
