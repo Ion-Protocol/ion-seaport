@@ -13,14 +13,11 @@ import {
     ConsiderationItem,
     ItemType
 } from "seaport-types/src/lib/ConsiderationStructs.sol";
-import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.sol";
 
 import { IERC20 } from "openzeppelin-contracts/contracts/interfaces/IERC20.sol";
 import { SafeERC20 } from "openzeppelin-contracts/contracts/token/ERC20/utils/SafeERC20.sol";
 
 import { WadRayMath } from "ion-protocol/src/libraries/math/WadRayMath.sol";
-
-import { console2 } from "forge-std/console2.sol";
 
 contract SeaportLeverage is SeaportBase {
     using SafeERC20 for IERC20;
@@ -75,6 +72,95 @@ contract SeaportLeverage is SeaportBase {
         COLLATERAL.approve(address(JOIN), type(uint256).max);
     }
 
+    /**
+     * @notice Leverage a position on `IonPool` through Seaport.
+     *
+     * @dev
+     * ```solidity
+     * struct Order {
+     *      OrderParameters parameters;
+     *      bytes signature;
+     * }
+     *
+     * struct OrderParameters {
+     *      address offerer; // 0x00
+     *      address zone; // 0x20
+     *      OfferItem[] offer; // 0x40
+     *      ConsiderationItem[] consideration; // 0x60
+     *      OrderType orderType; // 0x80
+     *      uint256 startTime; // 0xa0
+     *      uint256 endTime; // 0xc0
+     *      bytes32 zoneHash; // 0xe0
+     *      uint256 salt; // 0x100
+     *      bytes32 conduitKey; // 0x120
+     *      uint256 totalOriginalConsiderationItems; // 0x140
+     * }
+     *
+     *
+     * struct OfferItem {
+     *      ItemType itemType;
+     *      address token;
+     *      uint256 identifierOrCriteria;
+     *      uint256 startAmount;
+     *      uint256 endAmount;
+     * }
+     *
+     * struct ConsiderationItem {
+     *      ItemType itemType;
+     *      address token;
+     *      uint256 identifierOrCriteria;
+     *      uint256 startAmount;
+     *      uint256 endAmount;
+     *      address payable recipient;
+     * }
+     * ```
+     *
+     * REQUIRES:
+     * - There should only be one token for the `Offer`.
+     * - There should be two items in the `Consideration`.
+     * - The `zone` must be this contract's address.
+     * - The `orderType` must be `FULL_RESTRICTED`. This means only the `zone`,
+     * or the offerer, can fulfill the order.
+     * - The `conduitKey` must be zero. No conduit should be used.
+     * - The `totalOriginalConsiderationItems` must be 2.
+     *
+     * - The `Offer` item must be of type `ERC20`.
+     * - For the case of leverage, `token` of the `Offer` item must be the
+     * `COLLATERAL` token.
+     * - The `startAmount` and `endAmount` of the `Offer` item must be equal to
+     * `collateralToPurchase`. Start and end should be equal because the amount is fixed.
+     *
+     * - The first `Consideration` item must be of type `ERC20`.
+     * - The `token` of the first `Consideration` item must be this contract's
+     * address. This is to allow this contract to gain control flow. We also
+     * want to use the `transferFrom()` args to communicate data to the
+     * `transferFrom()` callback. Any data that can't be fit into the
+     * `transferFrom()` args will be communicated through transient storage.
+     * - The `startAmount` and `endAmount` of the first `Consideration` item
+     * communicate the amount of `BASE` asset to borrow from the IonPool during
+     * the callback.
+     * - The `recipient` of the first `Consideration` item must be `msg.sender`.
+     * This will be user's vault that will be deleveraged. This contract assumes
+     * that caller is the owner of the vault.
+     *
+     * - The second `Consideration` item must be of type `ERC20`.
+     * - The `token` of the second `Consideration` item must be the `BASE`
+     * - The second `Consideration` item must have the `startAmount` and `endAmount`
+     * equal to `amountToBorrow`.
+     *
+     * We don't constrain the `recipient` of the second `Consideration` item.
+     *
+     * It is technically possible for two distinct orders to have the same
+     * parameters. The `salt` should be used to distinguish between two orders
+     * with the same parameters. Otherwise, they will map to the same order hash
+     * and only one of them will be able to be fulfilled.
+     *
+     * @param order Seaport order.
+     * @param initialDeposit Amount of collateral to be transferred from sender. [WAD]
+     * @param resultingAdditionalCollateral Total collateral to be deposited from this call. [WAD]
+     * @param amountToBorrow Amount of base asset to borrow. [WAD]
+     * @param proof Merkle path for the whitelist root.
+     */
     function leverage(
         Order calldata order,
         uint256 initialDeposit,
@@ -115,10 +201,8 @@ contract SeaportLeverage is SeaportBase {
         if (consideration1.startAmount != amountToBorrow) 
             revert C1StartAmountMustBeAmountToBorrow(consideration1.startAmount, amountToBorrow);
         if (consideration1.endAmount != amountToBorrow) 
-            revert C1EndAmountMustBeAmountToBorrow(consideration1.endAmount, amountToBorrow);
-        console2.log('msg sender', msg.sender);
-        console2.log('recipient', consideration1.recipient);
-        if (consideration1.recipient != msg.sender) // TODO: does this matter? or is it just overconstraint?
+            revert C1EndAmountMustBeAmountToBorrow(consideration1.endAmount, amountToBorrow);    
+        if (consideration1.recipient != msg.sender)
             revert C1RecipientMustBeSender(consideration1.recipient);
 
         ConsiderationItem calldata consideration2 = params.consideration[1];
@@ -135,7 +219,6 @@ contract SeaportLeverage is SeaportBase {
 
         assembly {
             tstore(TSLOT_AWAIT_CALLBACK, 1)
-            // just store total deposit amount and not both
             tstore(TSLOT_RESULTING_ADDITIONAL_COLLATERAL, resultingAdditionalCollateral)
         }
 
@@ -173,13 +256,10 @@ contract SeaportLeverage is SeaportBase {
 
         uint256 currentRate = POOL.rate(ILK_INDEX);
 
-        // get normalized amount such that the resulting borrowed amount is exactly `amountToBorrow`
-        // changeInDebt = changeInNormalizedDebt * rate
-        // transferAmt = changeInDebt / RAY
-        // this transferAmt must be `amountToBorrow`
+        // Gets the normalized amount such that the reuslting borrowed amount is at least `amountToBorrow`.
+        // This may create dust amounts of additional debt than intended.
         uint256 amountToBorrowNormalized = amountToBorrow.rayDivUp(currentRate);
 
-        // deposit combined collateral
         JOIN.join(address(this), resultingAdditionalCollateral);
         POOL.depositCollateral(ILK_INDEX, user, address(this), resultingAdditionalCollateral, new bytes32[](0));
         POOL.borrow(ILK_INDEX, user, address(this), amountToBorrowNormalized, new bytes32[](0));

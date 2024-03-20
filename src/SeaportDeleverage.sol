@@ -125,7 +125,6 @@ contract SeaportDeleverage is SeaportBase {
      *      uint256 totalOriginalConsiderationItems; // 0x140
      * }
      *
-     *
      * struct OfferItem {
      *      ItemType itemType;
      *      address token;

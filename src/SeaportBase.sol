@@ -2,7 +2,6 @@
 pragma solidity 0.8.24;
 
 import { IERC20 } from "openzeppelin-contracts/contracts/interfaces/IERC20.sol";
-import { SafeERC20 } from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import { IIonPool } from "./interfaces/IIonPool.sol";
 import { IGemJoin } from "./interfaces/IGemJoin.sol";
 import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.sol";
@@ -41,7 +40,7 @@ contract SeaportBase {
 
     SeaportInterface public constant SEAPORT = SeaportInterface(0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC);
 
-    uint8 ILK_INDEX = 0;
+    uint8 public immutable ILK_INDEX;
 
     IIonPool public immutable POOL;
     IGemJoin public immutable JOIN;
@@ -49,6 +48,11 @@ contract SeaportBase {
     IERC20 public immutable BASE;
     IERC20 public immutable COLLATERAL;
 
+    /**
+     * @dev Modifier to check that the callback can only be called when initiated by
+     * this contract. Other contract calls that tries to enter this contract's callback
+     * will revert.
+     */
     modifier onlyReentrant() {
         uint256 deleverageInitiated;
 
@@ -60,6 +64,9 @@ contract SeaportBase {
         _;
     }
 
+    /**
+     * @dev Modifier to check that the callback can only be called by the Seaport contract.
+     */
     modifier onlySeaport() {
         if (msg.sender != address(SEAPORT)) revert MsgSenderMustBeSeaport(msg.sender);
         _;
