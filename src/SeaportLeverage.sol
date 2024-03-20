@@ -19,6 +19,60 @@ import { SafeERC20 } from "openzeppelin-contracts/contracts/token/ERC20/utils/Sa
 
 import { WadRayMath } from "ion-protocol/src/libraries/math/WadRayMath.sol";
 
+
+/**
+ * @title Seaport Leverage
+ * @notice A contract to leverage a position on Ion Protocol using RFQ swaps
+ * facilitated by Seaport.
+ *
+ * @dev The standard Seaport flow would go as follows:
+ *
+ *      1. An `offerrer` creates an `Order` and signs it. The `fulfiller` will
+ *      be given both the `Order` payload and the `signature`. The `fulfiller`'s
+ *      role is to execute the transaction.
+ *
+ *      Inside an `Order`, there is
+ *       - an `offerer`: the signature that will be `ecrecover()`ed to verify
+ *       the integrity of the signature.
+ *       - an array of `Offer`s: Each `Offer` will have a token and an amount.
+ *       - an array of `Consideration`s: Each `Consideration` will have a token,
+ *       an amount and a recipient.
+ *
+ *      2. Seaport will verify the signature was signed by the `offerer`.
+ *
+ *      3. Seaport will iterate through all the `Offer`s and transfer the
+ *      specified amount of each token to the fulfiller from the offerer.
+ *
+ *      4. Seaport will iterate through all the `Consideration`s and transfer
+ *      the specified amount of each token from the fulfiller to the recipient.
+ *
+ * For the leverage and deleverage use-case, it is unideal that steps 3 and 4 must happen
+ * in order because it means `Offer` items cannot be used before satisfying
+ * `Consideration` constraints. In a leverage case, the user requires access
+ * to the additionally purchased collateral before taking out a loan from the 
+ * IonPool to pay the offerer. This requires Seaport to first transfer the `BASE` 
+ * asset to the user, give control flow to user who can then take out additional 
+ * loan from the purchased collateral, then trasnfer the newly borrowed `BASE` 
+ * from the user to pay the offerer. 
+ * 
+ * While this would not be possible in the standard Seaport flow, we engage in a
+ * non-standard flow that hijacks the ERC20 `transferFrom()` to gain control
+ * flow in between steps 3 and 4. Normally, if the `offerer` wanted to sign for
+ * a trade between 100 Token A and 90 Token B, the `Order` payload would contain
+ * an `Offer` of 100 Token A and a `Consideration` of 90 Token B to the
+ * `offerer`'s address.
+ *
+ * However, to sign for the same trade to be executed through this contract, the
+ * `Order` payload would still contain an `Offer` of 100 Token A. However, the
+ * first `Consideration` would pass this contract address as the token address
+ * (and the amount would be used to pass some other data) and the second
+ * `Consideration` would pass the aforementioned 90 Token B to the `offerer`'s
+ * address.
+ *
+ * This allows this contract to gain control flow in between steps 3 and 4
+ * through the `transferFrom()` function and Seaport still enforces the
+ * `constraints` of the other `Consideration`s ensuring counterparty's terms.
+ */
 contract SeaportLeverage is SeaportBase {
     using SafeERC20 for IERC20;
     using WadRayMath for uint256;
@@ -202,6 +256,12 @@ contract SeaportLeverage is SeaportBase {
             revert C1StartAmountMustBeAmountToBorrow(consideration1.startAmount, amountToBorrow);
         if (consideration1.endAmount != amountToBorrow) 
             revert C1EndAmountMustBeAmountToBorrow(consideration1.endAmount, amountToBorrow);    
+        
+        // Consider a case where the recipient is not a msg.sender. The msg.sender can call 
+        // this leverage function and specify a different recipient. If that recipient has 
+        // added this contract as an operator (if they used this contract before), the msg.sender 
+        // can use this contract to manipulate the recipient's vault. We constrain the recipient 
+        // and the msg.sender and take away the 'on-behalf-of' functionality to prevent this issue. 
         if (consideration1.recipient != msg.sender)
             revert C1RecipientMustBeSender(consideration1.recipient);
 

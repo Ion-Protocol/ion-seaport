@@ -8,7 +8,14 @@ import { SeaportInterface } from "seaport-types/src/interfaces/SeaportInterface.
 import { ItemType, OrderType } from "seaport-types/src/lib/ConsiderationEnums.sol";
 import { OrderParameters } from "seaport-types/src/lib/ConsiderationStructs.sol";
 
-contract SeaportBase {
+/**
+ * @title SeaportBase
+ * @notice A base contract to be inherited when interacting with Seaport to perform RFQ swaps. 
+ * @dev The child contracts such as the deleverage and leverage contract will need to implement
+ * further validation checks for the signer payload specific to their usecase. This contract 
+ * only constrains the general seaport order parameters that are shared among child contracts. 
+ */
+abstract contract SeaportBase {
     error InvalidContractConfigs(IIonPool pool, IGemJoin join);
 
     // Callback
