@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
+import { SeaportLeverage } from "./../src/SeaportLeverage.sol";
 import { IIonPool } from "../src/interfaces/IIonPool.sol";
 import { IGemJoin } from "../src/interfaces/IGemJoin.sol";
 import { IUFDMHandler } from "../src/interfaces/IUFDMHandler.sol";
@@ -23,12 +24,15 @@ import {
     OrderComponents
 } from "seaport-types/src/lib/ConsiderationStructs.sol";
 import { CalldataStart, CalldataPointer } from "seaport-types/src/helpers/PointerLibraries.sol";
-
+import { IERC20 } from "openzeppelin-contracts/contracts/interfaces/IERC20.sol";
+import { StdStorage, stdStorage } from "forge-std/StdStorage.sol";
 import { Test } from "forge-std/Test.sol";
 
 using EtherFiLibrary for IWeEth;
 using KelpDaoLibrary for IRsEth;
 using LidoLibrary for IWstEth;
+
+import { console2 } from "forge-std/console2.sol";
 
 contract SeaportOrderHash is Seaport {
     constructor(address conduitController) Seaport(conduitController) { }
@@ -55,6 +59,12 @@ contract SeaportOrderHash is Seaport {
 }
 
 contract SeaportTestBase is Test {
+    using stdStorage for StdStorage;
+
+    StdStorage stdstore1;
+
+    uint8 constant ILK_INDEX = 0;
+
     IWstEth constant WSTETH = IWstEth(0x7f39C581F595B53c5cb19bD0b3f8dA6c935E2Ca0);
     IWeEth constant WEETH = IWeEth(0xCd5fE23C85820F7B72D0926FC9b05b43E359b7ee);
     IEEth constant EETH = IEEth(0x35fA164735182de50811E8e2E824cFb9B6118ac2);
@@ -80,27 +90,41 @@ contract SeaportTestBase is Test {
     SeaportDeleverage weEthSeaportDeleverage;
     SeaportDeleverage rsEthSeaportDeleverage;
 
+    SeaportLeverage weEthSeaportLeverage;
+
+    IERC20 public BASE;
+    IERC20 public COLLATERAL;
+
     function setUp() public virtual {
         vm.createSelectFork(vm.envString("MAINNET_RPC_URL"));
         weEthIonPool = IIonPool(0x0000000000eaEbd95dAfcA37A39fd09745739b78);
         weEthGemJoin = IGemJoin(0x3f6119B0328C27190bE39597213ea1729f061876);
         weEthHandler = IUFDMHandler(payable(0xAB3c6236327FF77159B37f18EF85e8AC58034479));
 
+        BASE = IERC20(weEthIonPool.underlying());
+        COLLATERAL = IERC20(weEthIonPool.getIlkAddress(0));
+
         rsEthIonPool = IIonPool(0x0000000000E33e35EE6052fae87bfcFac61b1da9);
         rsEthGemJoin = IGemJoin(0x3bC3AC09d1ee05393F2848d82cb420f347954432);
         rsEthHandler = IUFDMHandler(payable(0x335FBFf118829Aa5ef0ac91196C164538A21a45A));
 
-        weEthSeaportDeleverage = new SeaportDeleverage(weEthIonPool, weEthGemJoin);
-        rsEthSeaportDeleverage = new SeaportDeleverage(rsEthIonPool, rsEthGemJoin);
+        whitelist = IWhitelist(0x7E317f99aA313669AaCDd8dB3927ff3aCB562dAD);
+
+        weEthSeaportDeleverage = new SeaportDeleverage(weEthIonPool, weEthGemJoin, ILK_INDEX);
+
+        // TODO: Not instnatiating this rsETH contract also leads to invalid signer error
+        rsEthSeaportDeleverage = new SeaportDeleverage(rsEthIonPool, rsEthGemJoin, ILK_INDEX);
 
         seaport = SeaportOrderHash(payable(address(weEthSeaportDeleverage.SEAPORT())));
 
         SeaportOrderHash s = new SeaportOrderHash(0x00000000F9490004C11Cef243f5400493c00Ad63);
         vm.etch(address(seaport), address(s).code);
 
-        whitelist = IWhitelist(0x7E317f99aA313669AaCDd8dB3927ff3aCB562dAD);
+        // TODO: instantiating leverage between new SeaportOrderHAsh and etch throws invalid signer
+        weEthSeaportLeverage = new SeaportLeverage(weEthIonPool, weEthGemJoin, ILK_INDEX, whitelist);
 
         (offerer, offererPrivateKey) = makeAddrAndKey("offerer");
+
         fulfiller = makeAddr("fulfiller");
 
         vm.startPrank(whitelist.owner());
@@ -188,7 +212,6 @@ contract SeaportTestBase is Test {
 
         OrderComponents memory components = abi.decode(abi.encode(params), (OrderComponents));
         bytes32 orderHash = seaport.getRealOrderHash(components);
-
         bytes32 digest = keccak256(abi.encodePacked(EIP_712_PREFIX, DOMAIN_SEPARATOR, orderHash));
 
         (uint8 v, bytes32 r, bytes32 s) = vm.sign(offererPrivateKey, digest);
@@ -196,5 +219,85 @@ contract SeaportTestBase is Test {
         bytes memory signature = abi.encodePacked(r, s, v);
 
         order = Order({ parameters: params, signature: signature });
+    }
+
+    function _createLeverageOrder(
+        IIonPool pool,
+        SeaportLeverage leverage,
+        uint256 collateralToPurchase,
+        uint256 amountToBorrow,
+        uint256 salt
+    )
+        internal
+        view
+        returns (Order memory order)
+    {
+        OfferItem memory offerItem = OfferItem({
+            itemType: ItemType.ERC20,
+            token: pool.getIlkAddress(0),
+            identifierOrCriteria: 0,
+            startAmount: collateralToPurchase,
+            endAmount: collateralToPurchase
+        });
+
+        ConsiderationItem memory considerationItem = ConsiderationItem({
+            itemType: ItemType.ERC20,
+            token: address(leverage),
+            identifierOrCriteria: 0,
+            startAmount: amountToBorrow,
+            endAmount: amountToBorrow,
+            recipient: payable(address(this))
+        });
+
+        ConsiderationItem memory considerationItem2 = ConsiderationItem({
+            itemType: ItemType.ERC20,
+            token: pool.underlying(),
+            identifierOrCriteria: 0,
+            startAmount: amountToBorrow,
+            endAmount: amountToBorrow,
+            recipient: payable(offerer)
+        });
+
+        OfferItem[] memory offerItems = new OfferItem[](1);
+        offerItems[0] = offerItem;
+
+        ConsiderationItem[] memory considerationItems = new ConsiderationItem[](2);
+        considerationItems[0] = considerationItem;
+        considerationItems[1] = considerationItem2;
+
+        OrderParameters memory params = OrderParameters({
+            offerer: offerer,
+            zone: address(leverage),
+            offer: offerItems,
+            consideration: considerationItems,
+            orderType: OrderType.FULL_RESTRICTED,
+            startTime: 0,
+            endTime: type(uint256).max,
+            zoneHash: bytes32(0),
+            salt: salt,
+            conduitKey: bytes32(0),
+            totalOriginalConsiderationItems: considerationItems.length
+        });
+
+        OrderComponents memory components = abi.decode(abi.encode(params), (OrderComponents));
+        bytes32 orderHash = seaport.getRealOrderHash(components);
+
+        bytes32 digest = keccak256(abi.encodePacked(EIP_712_PREFIX, DOMAIN_SEPARATOR, orderHash));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(offererPrivateKey, digest);
+
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        // test
+        address signer = ecrecover(bytes32(signature), v, r, s);
+        console2.log("signer: ", signer);
+        // require(signer == offerer, "signer not offerer");
+
+        order = Order({ parameters: params, signature: signature });
+    }
+
+    function setERC20Balance(address token, address usr, uint256 amt) public {
+        stdstore1.target(token).sig(IERC20(token).balanceOf.selector).with_key(usr).checked_write(amt);
+        require(IERC20(token).balanceOf(usr) == amt, "balance not set");
     }
 }

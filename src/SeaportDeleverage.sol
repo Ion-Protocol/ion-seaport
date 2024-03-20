@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity 0.8.24;
 
+import { SeaportBase } from "./SeaportBase.sol";
 import { IIonPool } from "./interfaces/IIonPool.sol";
 import { IGemJoin } from "./interfaces/IGemJoin.sol";
+import { IWhitelist } from "./interfaces/IWhitelist.sol";
 import { WadRayMath } from "@ionprotocol/libraries/math/WadRayMath.sol";
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
@@ -65,93 +67,36 @@ using WadRayMath for uint256;
  * This allows this contract to gain control flow in between steps 3 and 4
  * through the `transferFrom()` function and Seaport still enforces the
  * `constraints` of the other `Consideration`s ensuring counterparty's terms.
- * 
- * 
- * 
+ *
+ *
+ *
  * The case of a full deleverage presents a special problem where the exact
  * amount of debt to repay will not be known until tx execution since the debt
  * is accrued every block. This is problematic because the market maker won't be
  * able to sign for the exact amount of base token to be traded for offchain
  * (also, Seaport's support for partial fills is quite limited). In the case of
  * a full deleverage, the market maker can overestimate the amount of base token
- * to be sold and this contract will refund the excess to the user. 
- * 
+ * to be sold and this contract will refund the excess to the user.
+ *
  */
-contract SeaportDeleverage {
-    error InvalidContractConfigs(IIonPool pool, IGemJoin join);
-    error DeleverageMustBeInitiated();
-    error MsgSenderMustBeSeaport(address msgSender);
+contract SeaportDeleverage is SeaportBase {
     error NotEnoughCollateral(uint256 collateralToRemove, uint256 currentCollateral);
 
-    // Order parameters head validation
-    error OffersLengthMustBeOne(uint256 length);
-    error ConsiderationsLengthMustBeTwo(uint256 length);
-    error ZoneMustBeThis(address zone);
-    error OrderTypeMustBeFullRestricted(OrderType orderType);
-    error ZoneHashMustBeZero(bytes32 zoneHash);
-    error ConduitKeyMustBeZero(bytes32 conduitKey);
-    error InvalidTotalOriginalConsiderationItems();
-
     // Offer item validation
-    error OItemTypeMustBeERC20(ItemType itemType);
     error OTokenMustBeBase(address token);
     error OStartMustBeDebtToRepay(uint256 startAmount, uint256 debtToRepay);
     error OEndMustBeDebtToRepay(uint256 endAmount, uint256 debtToRepay);
 
     // Consideration item 1 validation
-    error C1TypeMustBeERC20(ItemType itemType);
-    error C1TokenMustBeThis(address token);
     error C1StartAmountMustBeDebtToRepay(uint256 startAmount, uint256 debtToRepay);
     error C1EndAmountMustBeDebtToRepay(uint256 endAmount, uint256 debtToRepay);
-    error C1RecipientMustBeSender(address invalidRecipient);
 
-    // Consideration item 2 validation
-    error C2TypeMustBeERC20(ItemType itemType);
+    // Consideration item 2 validation;
     error C2TokenMustBeCollateral(address token);
     error C2StartMustBeCollateralToRemove(uint256 startAmount, uint256 collateralToRemove);
     error C2EndMustBeCollateralToRemove(uint256 endAmount, uint256 collateralToRemove);
 
-    uint256 private constant TSLOT_DELEVERAGE_INITIATED = 0;
-    uint256 private constant TSLOT_COLLATERAL_TO_REMOVE = 1;
-
-    modifier onlyReentrant() {
-        uint256 deleverageInitiated;
-
-        assembly {
-            deleverageInitiated := tload(TSLOT_DELEVERAGE_INITIATED)
-        }
-
-        if (deleverageInitiated == 0) revert DeleverageMustBeInitiated();
-        _;
-    }
-
-    modifier onlySeaport() {
-        if (msg.sender != address(SEAPORT)) revert MsgSenderMustBeSeaport(msg.sender);
-        _;
-    }
-
-    SeaportInterface public constant SEAPORT = SeaportInterface(0x00000000000000ADc04C56Bf30aC9d3c0aAF14dC);
-    IIonPool public immutable POOL;
-    IGemJoin public immutable JOIN;
-
-    IERC20 public immutable BASE;
-    IERC20 public immutable COLLATERAL;
-
-    constructor(IIonPool pool, IGemJoin gemJoin) {
-        POOL = pool;
-        JOIN = gemJoin;
-
-        if (gemJoin.POOL() != address(pool)) {
-            revert InvalidContractConfigs(pool, gemJoin);
-        }
-        if (!pool.hasRole(pool.GEM_JOIN_ROLE(), address(gemJoin))) {
-            revert InvalidContractConfigs(pool, gemJoin);
-        }
-
-        BASE = IERC20(pool.underlying());
-        COLLATERAL = IERC20(gemJoin.GEM());
-
-        BASE.approve(address(SEAPORT), type(uint256).max);
+    constructor(IIonPool pool, IGemJoin gemJoin, uint8 ilkIndex) SeaportBase(pool, gemJoin, ilkIndex) {
         COLLATERAL.approve(address(SEAPORT), type(uint256).max);
         BASE.approve(address(POOL), type(uint256).max);
     }
@@ -248,12 +193,7 @@ contract SeaportDeleverage {
 
         OrderParameters calldata params = order.parameters;
 
-        if (params.offer.length != 1) revert OffersLengthMustBeOne(params.offer.length);
-        if (params.consideration.length != 2) revert ConsiderationsLengthMustBeTwo(params.consideration.length);
-        if (params.zone != address(this)) revert ZoneMustBeThis(params.zone);
-        if (params.orderType != OrderType.FULL_RESTRICTED) revert OrderTypeMustBeFullRestricted(params.orderType);
-        if (params.conduitKey != bytes32(0)) revert ConduitKeyMustBeZero(params.conduitKey);
-        if (params.totalOriginalConsiderationItems != 2) revert InvalidTotalOriginalConsiderationItems();
+        _validateOrderParams(params);
 
         OfferItem calldata offer1 = params.offer[0];
 
@@ -289,16 +229,16 @@ contract SeaportDeleverage {
         // forgefmt: disable-end
 
         assembly {
-            tstore(TSLOT_DELEVERAGE_INITIATED, 1)
-            tstore(TSLOT_COLLATERAL_TO_REMOVE, collateralToRemove)
+            tstore(TSLOT_AWAIT_CALLBACK, 1)
+            tstore(TSLOT_COLLATERAL_DELTA, collateralToRemove)
         }
 
         SEAPORT.fulfillOrder(order, bytes32(0));
 
         // Maintain composability
         assembly {
-            tstore(TSLOT_DELEVERAGE_INITIATED, 0)
-            tstore(TSLOT_COLLATERAL_TO_REMOVE, 0)
+            tstore(TSLOT_AWAIT_CALLBACK, 0)
+            tstore(TSLOT_COLLATERAL_DELTA, 0)
         }
     }
 
@@ -327,7 +267,7 @@ contract SeaportDeleverage {
     function seaportCallback4878572495(address, address user, uint256 debtToRepay) external onlySeaport onlyReentrant {
         uint256 collateralToRemove;
         assembly {
-            collateralToRemove := tload(TSLOT_COLLATERAL_TO_REMOVE)
+            collateralToRemove := tload(TSLOT_COLLATERAL_DELTA)
         }
 
         uint256 currentRate = POOL.rate(0);

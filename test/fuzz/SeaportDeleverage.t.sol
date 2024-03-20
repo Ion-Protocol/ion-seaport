@@ -93,7 +93,7 @@ contract SeaportDeleverage_FuzzTest is SeaportTestBase {
 
         assertEq(collateralBefore1 - collateralAfter1, collateralToRemove);
         if (fullDeleverage) {
-            assertEq(debtAfterRad, 0);     
+            assertEq(debtAfterRad, 0);
         } else {
             assertEq(debtBeforeRad - debtAfterRad, locs.normalizedDebtToRepay * weEthIonPool.rate(0));
         }

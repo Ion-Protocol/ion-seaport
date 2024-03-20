@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
+import { SeaportBase } from "./../../src/SeaportBase.sol";
 import { SeaportDeleverage } from "../../src/SeaportDeleverage.sol";
 import { SeaportTestBase } from "../SeaportTestBase.sol";
 
@@ -121,7 +122,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         OfferItem[] memory offerItems = new OfferItem[](invalidLength);
         order.parameters.offer = offerItems;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.OffersLengthMustBeOne.selector, invalidLength));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.OffersLengthMustBeOne.selector, invalidLength));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -133,7 +134,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         ConsiderationItem[] memory considerationItems = new ConsiderationItem[](invalidLength);
         order.parameters.consideration = considerationItems;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.ConsiderationsLengthMustBeTwo.selector, invalidLength));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.ConsiderationsLengthMustBeTwo.selector, invalidLength));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -144,7 +145,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         address invalidZone = address(this);
         order.parameters.zone = invalidZone;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.ZoneMustBeThis.selector, invalidZone));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.ZoneMustBeThis.selector, invalidZone));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -155,9 +156,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         OrderType invalidOrderType = OrderType.FULL_OPEN;
         order.parameters.orderType = invalidOrderType;
 
-        vm.expectRevert(
-            abi.encodeWithSelector(SeaportDeleverage.OrderTypeMustBeFullRestricted.selector, invalidOrderType)
-        );
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.OrderTypeMustBeFullRestricted.selector, invalidOrderType));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -168,7 +167,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         bytes32 invalidConduitKey = bytes32(uint256(1));
         order.parameters.conduitKey = invalidConduitKey;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.ConduitKeyMustBeZero.selector, invalidConduitKey));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.ConduitKeyMustBeZero.selector, invalidConduitKey));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -179,7 +178,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         uint256 invalidTotalOriginalConsiderationItems = 3;
         order.parameters.totalOriginalConsiderationItems = invalidTotalOriginalConsiderationItems;
 
-        vm.expectRevert(SeaportDeleverage.InvalidTotalOriginalConsiderationItems.selector);
+        vm.expectRevert(SeaportBase.InvalidTotalOriginalConsiderationItems.selector);
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -189,7 +188,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
 
         order.parameters.offer[0].itemType = ItemType.ERC1155;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.OItemTypeMustBeERC20.selector, ItemType.ERC1155));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.OItemTypeMustBeERC20.selector, ItemType.ERC1155));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -233,7 +232,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
 
         order.parameters.consideration[0].itemType = ItemType.ERC1155;
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.C1TypeMustBeERC20.selector, ItemType.ERC1155));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.C1TypeMustBeERC20.selector, ItemType.ERC1155));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -243,7 +242,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
 
         order.parameters.consideration[0].token = address(1);
 
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.C1TokenMustBeThis.selector, address(1)));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.C1TokenMustBeThis.selector, address(1)));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -278,7 +277,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
             _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 1_241_289);
 
         order.parameters.consideration[0].recipient = payable(address(1));
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.C1RecipientMustBeSender.selector, address(1)));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.C1RecipientMustBeSender.selector, address(1)));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -287,7 +286,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
             _createOrder(weEthIonPool, weEthSeaportDeleverage, collateralToRemove, debtToRepay, 1_241_289);
 
         order.parameters.consideration[1].itemType = ItemType.ERC1155;
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.C2TypeMustBeERC20.selector, ItemType.ERC1155));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.C2TypeMustBeERC20.selector, ItemType.ERC1155));
         weEthSeaportDeleverage.deleverage(order, collateralToRemove, debtToRepay);
     }
 
@@ -327,7 +326,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
     }
 
     function test_RevertWhen_SeaportNotCallerOnCallback() public {
-        vm.expectRevert(abi.encodeWithSelector(SeaportDeleverage.MsgSenderMustBeSeaport.selector, address(this)));
+        vm.expectRevert(abi.encodeWithSelector(SeaportBase.MsgSenderMustBeSeaport.selector, address(this)));
         weEthSeaportDeleverage.seaportCallback4878572495(address(0), address(0), 0);
     }
 
@@ -349,7 +348,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         order = Order({ parameters: order.parameters, signature: signature });
 
         vm.prank(offerer);
-        vm.expectRevert(SeaportDeleverage.DeleverageMustBeInitiated.selector);
+        vm.expectRevert(SeaportBase.NotACallback.selector);
         seaport.fulfillOrder(order, bytes32(0));
     }
 }
