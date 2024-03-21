@@ -19,7 +19,7 @@ abstract contract SeaportBase {
     error InvalidContractConfigs(IIonPool pool, IGemJoin join);
 
     // Callback
-    error NotACallback();
+    error NotAwaitingCallback();
     error MsgSenderMustBeSeaport(address msgSender);
 
     // Order parameters head validation
@@ -67,7 +67,7 @@ abstract contract SeaportBase {
             deleverageInitiated := tload(TSLOT_AWAIT_CALLBACK)
         }
 
-        if (deleverageInitiated == 0) revert NotACallback();
+        if (deleverageInitiated == 0) revert NotAwaitingCallback();
         _;
     }
 
@@ -80,8 +80,6 @@ abstract contract SeaportBase {
     }
 
     constructor(IIonPool pool, IGemJoin gemJoin, uint8 ilkIndex) {
-        POOL = pool;
-        JOIN = gemJoin;
 
         if (gemJoin.POOL() != address(pool)) {
             revert InvalidContractConfigs(pool, gemJoin);
@@ -89,6 +87,9 @@ abstract contract SeaportBase {
         if (!pool.hasRole(pool.GEM_JOIN_ROLE(), address(gemJoin))) {
             revert InvalidContractConfigs(pool, gemJoin);
         }
+       
+        POOL = pool;
+        JOIN = gemJoin;
 
         ILK_INDEX = ilkIndex;
 

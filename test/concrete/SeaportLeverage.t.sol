@@ -360,7 +360,34 @@ contract SeaportLeverage_Test is SeaportTestBase {
         order = Order({ parameters: order.parameters, signature: signature });
 
         vm.prank(offerer);
-        vm.expectRevert(SeaportBase.NotACallback.selector);
+        vm.expectRevert(SeaportBase.NotAwaitingCallback.selector);
         seaport.fulfillOrder(order, bytes32(0));
+    }
+
+    function test_RevertWhen_LeverageAmountIsZero() public {
+        uint256 initialDeposit = 1 ether; 
+        uint256 resultingAdditionalCollateral = 1 ether; 
+        uint256 collateralToPurchase = resultingAdditionalCollateral - initialDeposit;  
+        
+        Order memory order =
+            _createLeverageOrder(weEthIonPool, weEthSeaportLeverage, collateralToPurchase, amountToBorrow, 1_241_289);
+
+        order.parameters.orderType = OrderType.FULL_RESTRICTED;
+
+        OrderComponents memory components = abi.decode(abi.encode(order.parameters), (OrderComponents));
+        bytes32 orderHash = seaport.getRealOrderHash(components);
+
+        bytes32 digest = keccak256(abi.encodePacked(EIP_712_PREFIX, DOMAIN_SEPARATOR, orderHash));
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(offererPrivateKey, digest);
+
+        bytes memory signature = abi.encodePacked(r, s, v);
+
+        order = Order({ parameters: order.parameters, signature: signature });
+
+        vm.expectRevert(SeaportLeverage.ZeroLeverageAmount.selector);
+        weEthSeaportLeverage.leverage(
+            order, initialDeposit, resultingAdditionalCollateral, amountToBorrow, new bytes32[](0)
+        );
     }
 }

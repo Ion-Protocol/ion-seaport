@@ -348,7 +348,7 @@ contract SeaportDeleverage_Test is SeaportTestBase {
         order = Order({ parameters: order.parameters, signature: signature });
 
         vm.prank(offerer);
-        vm.expectRevert(SeaportBase.NotACallback.selector);
+        vm.expectRevert(SeaportBase.NotAwaitingCallback.selector);
         seaport.fulfillOrder(order, bytes32(0));
     }
 }

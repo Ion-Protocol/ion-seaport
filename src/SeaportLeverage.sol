@@ -90,10 +90,12 @@ contract SeaportLeverage is SeaportBase {
     error C1StartAmountMustBeAmountToBorrow(uint256 startAmount, uint256 amountToBorrow);
     error C1EndAmountMustBeAmountToBorrow(uint256 endAmount, uint256 amountToBorrow);
 
-    // Consideration item 2 validation, the base asset is beign paid for the offer
+    // Consideration item 2 validation, the base asset is being paid to the offerer
     error C2TokenMustBeBase(address token);
     error C2StartMustBeAmountToBorrow(uint256 startAmount, uint256 amountToBorrow);
     error C2EndMustBeAmountToBorrow(uint256 endAmount, uint256 amountToBorrow);
+
+    error ZeroLeverageAmount(); 
 
     /**
      * @notice Only allows whitelisted borrowers to use this contract.
@@ -119,10 +121,10 @@ contract SeaportLeverage is SeaportBase {
     {
         WHITELIST = whitelist;
 
-        // The IonPool takes the initial deposit collateral from
-        // the caller and seaport takes base asset from the offerer.
+        // Seaport takes base asset from the offerer.
         BASE.approve(address(SEAPORT), type(uint256).max);
-        COLLATERAL.approve(address(POOL), type(uint256).max);
+
+        // Gemjoin takes the collateral asset from this contract. 
         COLLATERAL.approve(address(JOIN), type(uint256).max);
     }
 
@@ -225,9 +227,7 @@ contract SeaportLeverage is SeaportBase {
         external
         onlyWhitelistedBorrowers(proof)
     {
-        // transfer initial collateral to this contract
         uint256 collateralToPurchase = resultingAdditionalCollateral - initialDeposit;
-        COLLATERAL.safeTransferFrom(msg.sender, address(this), initialDeposit);
 
         OrderParameters calldata params = order.parameters;
 
@@ -277,6 +277,13 @@ contract SeaportLeverage is SeaportBase {
             revert C2EndMustBeAmountToBorrow(consideration2.endAmount, amountToBorrow);
         // forgefmt: disable-end
 
+        // Seaport does not allow zero swap amounts. 
+        if (collateralToPurchase == 0) {
+            revert ZeroLeverageAmount(); 
+        }
+
+        COLLATERAL.safeTransferFrom(msg.sender, address(this), initialDeposit);
+
         assembly {
             tstore(TSLOT_AWAIT_CALLBACK, 1)
             tstore(TSLOT_RESULTING_ADDITIONAL_COLLATERAL, resultingAdditionalCollateral)
@@ -291,10 +298,29 @@ contract SeaportLeverage is SeaportBase {
     }
 
     /**
-     * initialCollateral
-     * resultingAdditionalCollateral
-     * Receive the collateral from offerer, make a deposit.
-     * Borrow from the IonPool to pay the seaport consideration.
+     * @notice This callback is triggered by Seaport to give control flow back to this contract. 
+     * `borrowAmount` and `totalDeposit` that aim too close to max leverage may revert on 
+     * UnsafePositionChange if the runtime debt is higher than expected at the time of generating 
+     * the signature.
+     * 
+     * @dev This function selector has been mined to match the `transferFrom()`
+     * selector (`0x23b872dd`). We hijack the `transferFrom()` selector to be
+     * able to use the default Seaport flow. This is a callback from Seaport to
+     * give this contract control flow between the `Offer` being transferred and
+     * the `Consideration` being transferred.
+     *
+     * In order to enforce that this function is only called through a
+     * transaction initiated by this contract, we use the `onlyReentrant`
+     * modifier.
+     *
+     * This function can only be called by the Seaport contract.
+     *
+     * The second and the third arguments are used to communicate data necessary
+     * for the callback context. Transient storage is used to communicate any
+     * extra data that could not be fit into the `transferFrom()` args.
+     * 
+     * @param user Address whose vault is being modified on `IonPool`. 
+     * @param amountToBorrow Amount of base asset to borrow. [WAD] 
      */
     function seaportCallback4878572495(
         address,
@@ -309,10 +335,6 @@ contract SeaportLeverage is SeaportBase {
         assembly {
             resultingAdditionalCollateral := tload(TSLOT_RESULTING_ADDITIONAL_COLLATERAL)
         }
-
-        // `borrowAmount` and `totalDeposit` that aim too close to max leverage
-        // may revert on UnsafePositionChange if the runtime debt is higher
-        // than expected at the time of generating the signature.
 
         uint256 currentRate = POOL.rate(ILK_INDEX);
 
