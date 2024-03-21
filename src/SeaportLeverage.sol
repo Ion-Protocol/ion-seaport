@@ -19,7 +19,6 @@ import { SafeERC20 } from "openzeppelin-contracts/contracts/token/ERC20/utils/Sa
 
 import { WadRayMath } from "ion-protocol/src/libraries/math/WadRayMath.sol";
 
-
 /**
  * @title Seaport Leverage
  * @notice A contract to leverage a position on Ion Protocol using RFQ swaps
@@ -49,12 +48,12 @@ import { WadRayMath } from "ion-protocol/src/libraries/math/WadRayMath.sol";
  * For the leverage and deleverage use-case, it is unideal that steps 3 and 4 must happen
  * in order because it means `Offer` items cannot be used before satisfying
  * `Consideration` constraints. In a leverage case, the user requires access
- * to the additionally purchased collateral before taking out a loan from the 
- * IonPool to pay the offerer. This requires Seaport to first transfer the `BASE` 
- * asset to the user, give control flow to user who can then take out additional 
- * loan from the purchased collateral, then trasnfer the newly borrowed `BASE` 
- * from the user to pay the offerer. 
- * 
+ * to the additionally purchased collateral before taking out a loan from the
+ * IonPool to pay the offerer. This requires Seaport to first transfer the `BASE`
+ * asset to the user, give control flow to user who can then take out additional
+ * loan from the purchased collateral, then trasnfer the newly borrowed `BASE`
+ * from the user to pay the offerer.
+ *
  * While this would not be possible in the standard Seaport flow, we engage in a
  * non-standard flow that hijacks the ERC20 `transferFrom()` to gain control
  * flow in between steps 3 and 4. Normally, if the `offerer` wanted to sign for
@@ -95,7 +94,7 @@ contract SeaportLeverage is SeaportBase {
     error C2StartMustBeAmountToBorrow(uint256 startAmount, uint256 amountToBorrow);
     error C2EndMustBeAmountToBorrow(uint256 endAmount, uint256 amountToBorrow);
 
-    error ZeroLeverageAmount(); 
+    error ZeroLeverageAmount();
 
     /**
      * @notice Only allows whitelisted borrowers to use this contract.
@@ -124,7 +123,7 @@ contract SeaportLeverage is SeaportBase {
         // Seaport takes base asset from the offerer.
         BASE.approve(address(SEAPORT), type(uint256).max);
 
-        // Gemjoin takes the collateral asset from this contract. 
+        // Gemjoin takes the collateral asset from this contract.
         COLLATERAL.approve(address(JOIN), type(uint256).max);
     }
 
@@ -255,13 +254,13 @@ contract SeaportLeverage is SeaportBase {
         if (consideration1.startAmount != amountToBorrow) 
             revert C1StartAmountMustBeAmountToBorrow(consideration1.startAmount, amountToBorrow);
         if (consideration1.endAmount != amountToBorrow) 
-            revert C1EndAmountMustBeAmountToBorrow(consideration1.endAmount, amountToBorrow);    
+            revert C1EndAmountMustBeAmountToBorrow(consideration1.endAmount, amountToBorrow);
         
-        // Consider a case where the recipient is not a msg.sender. The msg.sender can call 
-        // this leverage function and specify a different recipient. If that recipient has 
-        // added this contract as an operator (if they used this contract before), the msg.sender 
-        // can use this contract to manipulate the recipient's vault. We constrain the recipient 
-        // and the msg.sender and take away the 'on-behalf-of' functionality to prevent this issue. 
+        // Consider a case where the recipient is not a msg.sender. The msg.sender can call
+        // this leverage function and specify a different recipient. If that recipient has
+        // added this contract as an operator (if they used this contract before), the msg.sender
+        // can use this contract to manipulate the recipient's vault. We constrain the recipient
+        // and the msg.sender and take away the 'on-behalf-of' functionality to prevent this issue.
         if (consideration1.recipient != msg.sender)
             revert C1RecipientMustBeSender(consideration1.recipient);
 
@@ -277,9 +276,9 @@ contract SeaportLeverage is SeaportBase {
             revert C2EndMustBeAmountToBorrow(consideration2.endAmount, amountToBorrow);
         // forgefmt: disable-end
 
-        // Seaport does not allow zero swap amounts. 
+        // Seaport does not allow zero swap amounts.
         if (collateralToPurchase == 0) {
-            revert ZeroLeverageAmount(); 
+            revert ZeroLeverageAmount();
         }
 
         COLLATERAL.safeTransferFrom(msg.sender, address(this), initialDeposit);
@@ -298,11 +297,11 @@ contract SeaportLeverage is SeaportBase {
     }
 
     /**
-     * @notice This callback is triggered by Seaport to give control flow back to this contract. 
-     * `borrowAmount` and `totalDeposit` that aim too close to max leverage may revert on 
-     * UnsafePositionChange if the runtime debt is higher than expected at the time of generating 
+     * @notice This callback is triggered by Seaport to give control flow back to this contract.
+     * `borrowAmount` and `totalDeposit` that aim too close to max leverage may revert on
+     * UnsafePositionChange if the runtime debt is higher than expected at the time of generating
      * the signature.
-     * 
+     *
      * @dev This function selector has been mined to match the `transferFrom()`
      * selector (`0x23b872dd`). We hijack the `transferFrom()` selector to be
      * able to use the default Seaport flow. This is a callback from Seaport to
@@ -318,9 +317,9 @@ contract SeaportLeverage is SeaportBase {
      * The second and the third arguments are used to communicate data necessary
      * for the callback context. Transient storage is used to communicate any
      * extra data that could not be fit into the `transferFrom()` args.
-     * 
-     * @param user Address whose vault is being modified on `IonPool`. 
-     * @param amountToBorrow Amount of base asset to borrow. [WAD] 
+     *
+     * @param user Address whose vault is being modified on `IonPool`.
+     * @param amountToBorrow Amount of base asset to borrow. [WAD]
      */
     function seaportCallback4878572495(
         address,

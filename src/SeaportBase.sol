@@ -10,10 +10,10 @@ import { OrderParameters } from "seaport-types/src/lib/ConsiderationStructs.sol"
 
 /**
  * @title SeaportBase
- * @notice A base contract to be inherited when interacting with Seaport to perform RFQ swaps. 
+ * @notice A base contract to be inherited when interacting with Seaport to perform RFQ swaps.
  * @dev The child contracts such as the deleverage and leverage contract will need to implement
- * further validation checks for the signer payload specific to their usecase. This contract 
- * only constrains the general seaport order parameters that are shared among child contracts. 
+ * further validation checks for the signer payload specific to their usecase. This contract
+ * only constrains the general seaport order parameters that are shared among child contracts.
  */
 abstract contract SeaportBase {
     error InvalidContractConfigs(IIonPool pool, IGemJoin join);
@@ -80,14 +80,13 @@ abstract contract SeaportBase {
     }
 
     constructor(IIonPool pool, IGemJoin gemJoin, uint8 ilkIndex) {
-
         if (gemJoin.POOL() != address(pool)) {
             revert InvalidContractConfigs(pool, gemJoin);
         }
         if (!pool.hasRole(pool.GEM_JOIN_ROLE(), address(gemJoin))) {
             revert InvalidContractConfigs(pool, gemJoin);
         }
-       
+
         POOL = pool;
         JOIN = gemJoin;
 

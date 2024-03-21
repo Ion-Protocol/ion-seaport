@@ -365,10 +365,10 @@ contract SeaportLeverage_Test is SeaportTestBase {
     }
 
     function test_RevertWhen_LeverageAmountIsZero() public {
-        uint256 initialDeposit = 1 ether; 
-        uint256 resultingAdditionalCollateral = 1 ether; 
-        uint256 collateralToPurchase = resultingAdditionalCollateral - initialDeposit;  
-        
+        uint256 initialDeposit = 1 ether;
+        uint256 resultingAdditionalCollateral = 1 ether;
+        uint256 collateralToPurchase = resultingAdditionalCollateral - initialDeposit;
+
         Order memory order =
             _createLeverageOrder(weEthIonPool, weEthSeaportLeverage, collateralToPurchase, amountToBorrow, 1_241_289);
 
